@@ -14,44 +14,46 @@ from utils import CTCLabelConverter, AttnLabelConverter, Averager
 from dataset import hierarchical_dataset, AlignCollate
 from model import Model
 
-def validation(model, criterion, evaluation_loader, converter, opt, device):
-    """Validation or evaluation on CPU."""
+import torch
+import time
+import torch.nn.functional as F
+from nltk.metrics.distance import edit_distance
+
+def validation(model, criterion, evaluation_loader, converter, opt):
+    """Validation or evaluation running strictly on CPU."""
+    
+    # Force CPU usage
+    device = torch.device("cpu")
+    model.to(device)  # Ensure model is on CPU
+    model.eval()  # Set model to evaluation mode
+    
     n_correct = 0
     norm_ED = 0
     length_of_data = 0
     infer_time = 0
     valid_loss_avg = Averager()
-    
-    # Make sure the model is in evaluation mode.
-    model.eval()
-    
+
     for i, (image_tensors, labels) in enumerate(evaluation_loader):
         batch_size = image_tensors.size(0)
         length_of_data += batch_size
 
-        # Move the input images to the target device (CPU in this case).
-        image = image_tensors.to(device)
+        # Move everything to CPU
+        image = image_tensors.to("cpu")
+        length_for_pred = torch.IntTensor([opt.batch_max_length] * batch_size)  # Already on CPU
+        text_for_pred = torch.LongTensor(batch_size, opt.batch_max_length + 1).fill_(0)  # Already on CPU
 
-        # For max length prediction.
-        length_for_pred = torch.IntTensor([opt.batch_max_length] * batch_size).to(device)
-        text_for_pred = torch.LongTensor(batch_size, opt.batch_max_length + 1).fill_(0).to(device)
-
-        # Encode labels using your converter.
-        # NOTE: If converter.encode returns CPU tensors, this is fine.
+        # Encode labels using converter (assume outputs are on CPU)
         text_for_loss, length_for_loss = converter.encode(labels, batch_max_length=opt.batch_max_length)
-        text_for_loss = text_for_loss.to(device)
-        length_for_loss = length_for_loss.to(device)
 
         start_time = time.time()
 
         if 'CTC' in opt.Prediction:
-            preds = model(image, text_for_pred)
+            preds = model(image, text_for_pred)  # Ensure model expects CPU tensors
             forward_time = time.time() - start_time
 
-            # For CTC, create preds_size on device.
-            preds_size = torch.IntTensor([preds.size(1)] * batch_size).to(device)
+            preds_size = torch.IntTensor([preds.size(1)] * batch_size)  # Already on CPU
 
-            # Permute the prediction tensor to the expected format and compute loss.
+            # Compute loss
             cost = criterion(
                 preds.log_softmax(2).permute(1, 0, 2),
                 text_for_loss,
@@ -60,7 +62,6 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
             )
 
             if opt.decode == 'greedy':
-                # Greedy decoding: select max probability indices.
                 _, preds_index = preds.max(2)
                 preds_index = preds_index.view(-1)
                 preds_str = converter.decode_greedy(preds_index.data, preds_size.data)
@@ -70,27 +71,22 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
             preds = model(image, text_for_pred, is_train=False)
             forward_time = time.time() - start_time
 
-            # Adjust predictions to match the expected length.
             preds = preds[:, :text_for_loss.shape[1] - 1, :]
-            target = text_for_loss[:, 1:]  # without the [GO] symbol
+            target = text_for_loss[:, 1:]
 
-            # Compute loss for non-CTC predictions.
             cost = criterion(
                 preds.contiguous().view(-1, preds.shape[-1]),
                 target.contiguous().view(-1)
             )
 
-            # Greedy decoding.
             _, preds_index = preds.max(2)
             preds_str = converter.decode(preds_index, length_for_pred)
 
-            # Also decode the labels for reporting.
             labels = converter.decode(text_for_loss[:, 1:], length_for_loss)
 
         infer_time += forward_time
         valid_loss_avg.add(cost)
 
-        # Calculate accuracy & confidence score.
         preds_prob = F.softmax(preds, dim=2)
         preds_max_prob, _ = preds_prob.max(dim=2)
         confidence_score_list = []
@@ -99,12 +95,13 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
             if 'Attn' in opt.Prediction:
                 gt = gt[:gt.find('[s]')]
                 pred_EOS = pred.find('[s]')
-                pred = pred[:pred_EOS]  # prune after "end of sentence" token ([s])
+                pred = pred[:pred_EOS]
                 pred_max_prob = pred_max_prob[:pred_EOS]
+
             if pred == gt:
                 n_correct += 1
 
-            # ICDAR2019 Normalized Edit Distance.
+            # ICDAR2019 Normalized Edit Distance
             if len(gt) == 0 or len(pred) == 0:
                 norm_ED += 0
             elif len(gt) > len(pred):
@@ -112,16 +109,13 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
             else:
                 norm_ED += 1 - edit_distance(pred, gt) / len(pred)
 
-            # Calculate the confidence score (cumulative product of max probabilities).
             try:
                 confidence_score = pred_max_prob.cumprod(dim=0)[-1]
             except Exception:
-                confidence_score = 0  # For empty prediction cases.
+                confidence_score = 0  
             confidence_score_list.append(confidence_score)
 
-    # End of loop iteration.
-
     accuracy = n_correct / float(length_of_data) * 100
-    norm_ED = norm_ED / float(length_of_data)  # ICDAR2019 Normalized Edit Distance
+    norm_ED = norm_ED / float(length_of_data)  
 
     return valid_loss_avg.val(), accuracy, norm_ED, preds_str, confidence_score_list, labels, infer_time, length_of_data
