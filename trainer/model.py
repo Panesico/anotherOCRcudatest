@@ -9,20 +9,25 @@ class Model(nn.Module):
     def __init__(self, opt):
         super(Model, self).__init__()
         self.opt = opt
-        self.device = torch.device("cpu")  # Force model to CPU
+        self.device = torch.device("cpu")  # Force CPU
+        
+        self.stages = {'Trans': opt.Transformation,
+                       'Feat': opt.FeatureExtraction,
+                       'Seq': opt.SequenceModeling,
+                       'Pred': opt.Prediction}
 
-        self.stages = {'Trans': opt.Transformation, 'Feat': opt.FeatureExtraction,
-                       'Seq': opt.SequenceModeling, 'Pred': opt.Prediction}
-
-        """ Transformation """
+        # Transformation stage
         if opt.Transformation == 'TPS':
             self.Transformation = TPS_SpatialTransformerNetwork(
-                F=opt.num_fiducial, I_size=(opt.imgH, opt.imgW), I_r_size=(opt.imgH, opt.imgW), I_channel_num=opt.input_channel
+                F=opt.num_fiducial,
+                I_size=(opt.imgH, opt.imgW),
+                I_r_size=(opt.imgH, opt.imgW),
+                I_channel_num=opt.input_channel
             ).to(self.device)
         else:
             print('No Transformation module specified')
 
-        """ FeatureExtraction """
+        # Feature Extraction stage
         if opt.FeatureExtraction == 'VGG':
             self.FeatureExtraction = VGG_FeatureExtractor(opt.input_channel, opt.output_channel).to(self.device)
         elif opt.FeatureExtraction == 'RCNN':
@@ -31,11 +36,10 @@ class Model(nn.Module):
             self.FeatureExtraction = ResNet_FeatureExtractor(opt.input_channel, opt.output_channel).to(self.device)
         else:
             raise Exception('No FeatureExtraction module specified')
-        
-        self.FeatureExtraction_output = opt.output_channel  
-        self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d((None, 1)).to(self.device)  
+        self.FeatureExtraction_output = opt.output_channel
+        self.AdaptiveAvgPool = nn.AdaptiveAvgPool2d((None, 1)).to(self.device)
 
-        """ Sequence modeling"""
+        # Sequence Modeling stage
         if opt.SequenceModeling == 'BiLSTM':
             self.SequenceModeling = nn.Sequential(
                 BidirectionalLSTM(self.FeatureExtraction_output, opt.hidden_size, opt.hidden_size),
@@ -46,35 +50,36 @@ class Model(nn.Module):
             print('No SequenceModeling module specified')
             self.SequenceModeling_output = self.FeatureExtraction_output
 
-        """ Prediction """
+        # Prediction stage
         if opt.Prediction == 'CTC':
             self.Prediction = nn.Linear(self.SequenceModeling_output, opt.num_class).to(self.device)
         elif opt.Prediction == 'Attn':
             self.Prediction = Attention(self.SequenceModeling_output, opt.hidden_size, opt.num_class).to(self.device)
         else:
-            raise Exception('Prediction is neither CTC or Attn')
+            raise Exception('Prediction is neither CTC nor Attn')
 
     def forward(self, input, text, is_train=True):
-        """ Move input tensors to CPU """
+        # Ensure input tensors are on CPU
         input = input.to(self.device)
         text = text.to(self.device)
 
-        """ Transformation stage """
-        if not self.stages['Trans'] == "None":
+        # Transformation stage
+        if self.stages['Trans'] != "None":
             input = self.Transformation(input)
 
-        """ Feature extraction stage """
+        # Feature extraction stage
         visual_feature = self.FeatureExtraction(input)
-        visual_feature = self.AdaptiveAvgPool(visual_feature.permute(0, 3, 1, 2))  
+        # Permute dimensions to match AdaptiveAvgPool's expectations
+        visual_feature = self.AdaptiveAvgPool(visual_feature.permute(0, 3, 1, 2))
         visual_feature = visual_feature.squeeze(3)
 
-        """ Sequence modeling stage """
+        # Sequence modeling stage
         if self.stages['Seq'] == 'BiLSTM':
             contextual_feature = self.SequenceModeling(visual_feature)
         else:
-            contextual_feature = visual_feature  
+            contextual_feature = visual_feature
 
-        """ Prediction stage """
+        # Prediction stage
         if self.stages['Pred'] == 'CTC':
             prediction = self.Prediction(contextual_feature.contiguous())
         else:
