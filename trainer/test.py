@@ -15,26 +15,29 @@ from dataset import hierarchical_dataset, AlignCollate
 from model import Model
 
 def validation(model, criterion, evaluation_loader, converter, opt, device):
-    """Validation or evaluation."""
+    """Validation or evaluation on CPU."""
     n_correct = 0
     norm_ED = 0
     length_of_data = 0
     infer_time = 0
     valid_loss_avg = Averager()
     
+    # Make sure the model is in evaluation mode.
+    model.eval()
+    
     for i, (image_tensors, labels) in enumerate(evaluation_loader):
         batch_size = image_tensors.size(0)
         length_of_data += batch_size
 
-        # Move the input images to the target device.
+        # Move the input images to the target device (CPU in this case).
         image = image_tensors.to(device)
 
-        # For max length prediction
+        # For max length prediction.
         length_for_pred = torch.IntTensor([opt.batch_max_length] * batch_size).to(device)
         text_for_pred = torch.LongTensor(batch_size, opt.batch_max_length + 1).fill_(0).to(device)
 
         # Encode labels using your converter.
-        # NOTE: If converter.encode returns CPU tensors, move them to device.
+        # NOTE: If converter.encode returns CPU tensors, this is fine.
         text_for_loss, length_for_loss = converter.encode(labels, batch_max_length=opt.batch_max_length)
         text_for_loss = text_for_loss.to(device)
         length_for_loss = length_for_loss.to(device)
@@ -77,9 +80,11 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
                 target.contiguous().view(-1)
             )
 
-            # Greedy decoding
+            # Greedy decoding.
             _, preds_index = preds.max(2)
             preds_str = converter.decode(preds_index, length_for_pred)
+
+            # Also decode the labels for reporting.
             labels = converter.decode(text_for_loss[:, 1:], length_for_loss)
 
         infer_time += forward_time
@@ -99,7 +104,7 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
             if pred == gt:
                 n_correct += 1
 
-            # ICDAR2019 Normalized Edit Distance
+            # ICDAR2019 Normalized Edit Distance.
             if len(gt) == 0 or len(pred) == 0:
                 norm_ED += 0
             elif len(gt) > len(pred):
@@ -107,14 +112,14 @@ def validation(model, criterion, evaluation_loader, converter, opt, device):
             else:
                 norm_ED += 1 - edit_distance(pred, gt) / len(pred)
 
-            # Calculate the confidence score (cumulative product of max probabilities)
+            # Calculate the confidence score (cumulative product of max probabilities).
             try:
                 confidence_score = pred_max_prob.cumprod(dim=0)[-1]
             except Exception:
                 confidence_score = 0  # For empty prediction cases.
             confidence_score_list.append(confidence_score)
 
-        # End of loop iteration
+    # End of loop iteration.
 
     accuracy = n_correct / float(length_of_data) * 100
     norm_ED = norm_ED / float(length_of_data)  # ICDAR2019 Normalized Edit Distance
