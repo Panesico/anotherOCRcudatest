@@ -19,7 +19,7 @@ import time
 import torch.nn.functional as F
 from nltk.metrics.distance import edit_distance
 
-def validation(model, criterion, evaluation_loader, converter, opt):
+def validation(model, criterion, evaluation_loader, converter, opt, device):
     """Validation or evaluation running strictly on CPU."""
     
     # Force CPU usage
