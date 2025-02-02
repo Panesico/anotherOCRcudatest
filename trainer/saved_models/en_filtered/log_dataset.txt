@@ -1,0 +1,27 @@
+--------------------------------------------------------------------------------
+dataset_root: all_data/anotherOCR
+opt.select_data: ['train']
+opt.batch_ratio: ['1']
+--------------------------------------------------------------------------------
+dataset_root: all_data/anotherOCR	 dataset: train
+sub-directory:	/train	 num samples: 30000
+num total samples of train: 30000 x 1.0 (total_data_usage_ratio) = 30000
+num samples of train per batch: 32 x 1.0 (batch_ratio) = 32
+--------------------------------------------------------------------------------
+Total_batch_size: 32 = 32
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+dataset_root: all_data/anotherOCR
+opt.select_data: ['train']
+opt.batch_ratio: ['1']
+--------------------------------------------------------------------------------
+dataset_root: all_data/anotherOCR	 dataset: train
+sub-directory:	/train	 num samples: 30000
+num total samples of train: 30000 x 1.0 (total_data_usage_ratio) = 30000
+num samples of train per batch: 32 x 1.0 (batch_ratio) = 32
+--------------------------------------------------------------------------------
+Total_batch_size: 32 = 32
+--------------------------------------------------------------------------------
+dataset_root: all_data/anotherOCR/eval	 dataset: /
+sub-directory:	/.	 num samples: 167
+--------------------------------------------------------------------------------
