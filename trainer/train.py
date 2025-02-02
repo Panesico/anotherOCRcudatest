@@ -30,6 +30,7 @@ def count_parameters(model):
     return total_params
 
 def train(opt, show_number = 2, amp=False):
+    global device
     device = torch.device("cpu")
     """ dataset preparation """
     if not opt.data_filtering_off:
